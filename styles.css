@@ -150,6 +150,7 @@ input,select,textarea{font-family:inherit;font-size:14px}
 .tag.due{background:var(--surface);border:1px solid var(--border);color:var(--muted)}
 .tag.due.over{background:var(--danger-soft);color:var(--danger);border-color:transparent}
 .tag.due.today{background:var(--primary-soft);color:var(--primary-ink);border-color:transparent}
+.tag.repeat{background:var(--primary-soft);color:var(--primary-ink)}
 
 /* Column wrapper (stacked cards) */
 .col{display:flex;flex-direction:column;gap:18px}

@@ -22,6 +22,19 @@
   function dateKey(d){ return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
   function parseKey(k){ const [y,m,d]=k.split('-').map(Number); return new Date(y,m-1,d); }
   function addDays(k,n){ const d=parseKey(k); d.setDate(d.getDate()+n); return dateKey(d); }
+  // advance a due date by the recurrence interval
+  function nextDue(repeat, fromKey){
+    const d=parseKey(fromKey);
+    if(repeat==='daily') d.setDate(d.getDate()+1);
+    else if(repeat==='weekly') d.setDate(d.getDate()+7);
+    else if(repeat==='monthly'){
+      const day=d.getDate();
+      d.setDate(1); d.setMonth(d.getMonth()+1);
+      const dim=new Date(d.getFullYear(), d.getMonth()+1, 0).getDate(); // days in target month
+      d.setDate(Math.min(day, dim));
+    }
+    return dateKey(d);
+  }
   function prettyDate(k){
     if(!k) return '';
     const d=parseKey(k); const t=parseKey(todayKey());
@@ -32,6 +45,7 @@
     return d.toLocaleDateString(undefined,{month:'short',day:'numeric'});
   }
   const PRIORITY_RANK = {high:0, medium:1, low:2};
+  const REPEAT_LABEL = {daily:'Daily', weekly:'Weekly', monthly:'Monthly'};
   function escapeHtml(s){ return (s||'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
 
   /* ---------- state ---------- */
@@ -82,12 +96,13 @@
     if(localStorage.getItem(SEED_KEY)) return;
     const t = todayKey();
     const sample = [
-      {title:'Review project roadmap',  priority:'high',   area:'work',     category:'Planning', due:t,            status:'todo', notes:''},
-      {title:'Reply to customer emails',priority:'medium', area:'work',     category:'Comms',    due:t,            status:'todo', notes:''},
-      {title:'30 min workout',          priority:'low',    area:'personal', category:'Health',   due:t,            status:'done', notes:''},
-      {title:'Read 20 pages',           priority:'low',    area:'personal', category:'Learning', due:addDays(t,1), status:'todo', notes:''},
-      {title:'Prepare weekly report',   priority:'high',   area:'work',     category:'Planning', due:addDays(t,2), status:'todo', notes:''},
-      {title:'Grocery shopping',        priority:'medium', area:'personal', category:'Errands',  due:addDays(t,-1),status:'todo', notes:''},
+      {title:'Review project roadmap',  priority:'high',   area:'work',     category:'Planning', due:t,            status:'todo', notes:'', repeat:'none'},
+      {title:'Reply to customer emails',priority:'medium', area:'work',     category:'Comms',    due:t,            status:'todo', notes:'', repeat:'daily'},
+      {title:'30 min workout',          priority:'low',    area:'personal', category:'Health',   due:t,            status:'todo', notes:'', repeat:'daily'},
+      {title:'Read 20 pages',           priority:'low',    area:'personal', category:'Learning', due:addDays(t,1), status:'todo', notes:'', repeat:'none'},
+      {title:'Prepare weekly report',   priority:'high',   area:'work',     category:'Planning', due:addDays(t,2), status:'todo', notes:'', repeat:'weekly'},
+      {title:'Pay credit card',         priority:'medium', area:'personal', category:'Finance',  due:addDays(t,4), status:'todo', notes:'', repeat:'monthly'},
+      {title:'Grocery shopping',        priority:'medium', area:'personal', category:'Errands',  due:addDays(t,-1),status:'todo', notes:'', repeat:'weekly'},
     ];
     const now = Date.now();
     tasks = sample.map((s,i)=>({id:uid(), createdAt:now+i, completedAt: s.status==='done'?now:null, ...s}));
@@ -127,7 +142,7 @@
     const done = tasks.filter(x=>x.status==='done');
     const overdue = active.filter(x=>x.due && x.due < t);
     const dueToday = tasks.filter(x=>x.due===t);
-    const doneToday = done.filter(x=>x.completedAt && dateKey(new Date(x.completedAt))===t);
+    const doneToday = tasks.filter(x=>x.completedAt && dateKey(new Date(x.completedAt))===t);
 
     $('#greet').textContent = greeting();
     $('#todayDate').textContent = new Date().toLocaleDateString(undefined,{weekday:'long',month:'long',day:'numeric'});
@@ -157,7 +172,7 @@
     const days=[]; let max=0;
     for(let i=6;i>=0;i--){
       const k=addDays(t,-i);
-      const c=done.filter(x=>x.completedAt && dateKey(new Date(x.completedAt))===k).length;
+      const c=tasks.filter(x=>x.completedAt && dateKey(new Date(x.completedAt))===k).length;
       max=Math.max(max,c);
       days.push({k,label:parseKey(k).toLocaleDateString(undefined,{weekday:'short'}).slice(0,2),c});
     }
@@ -273,6 +288,7 @@
           <span class="tag p-${x.priority}">${x.priority}</span>
           <span class="tag area ${x.area}">${x.area==='work'?'Work':'Personal'}</span>
           ${x.category?`<span class="tag cat">${escapeHtml(x.category)}</span>`:''}
+          ${x.repeat && x.repeat!=='none'?`<span class="tag repeat" title="Repeats ${REPEAT_LABEL[x.repeat]}">🔁 ${REPEAT_LABEL[x.repeat]}</span>`:''}
           ${dueTxt?`<span class="tag due ${dueCls}">${dueTxt}</span>`:''}
         </div>
       </div>
@@ -335,6 +351,7 @@
     $('#fArea').value    = task? (task.area||'personal'):'personal';
     $('#fCategory').value= task? task.category:'';
     $('#fDue').value     = task? task.due:'';
+    $('#fRepeat').value  = task? (task.repeat||'none'):'none';
     $('#fStatus').value  = task? task.status:'todo';
     $('#fNotes').value   = task? task.notes:'';
     $('#modalDelete').hidden = !task;
@@ -351,6 +368,7 @@
       area:$('#fArea').value,
       category:$('#fCategory').value.trim(),
       due:$('#fDue').value||'',
+      repeat:$('#fRepeat').value||'none',
       status:$('#fStatus').value,
       notes:$('#fNotes').value.trim(),
     };
@@ -479,8 +497,20 @@
         const x=tasks.find(t=>t.id===id); if(!x) return;
         const act=actBtn.dataset.act;
         if(act==='toggle'){
-          x.status = x.status==='done'?'todo':'done';
-          x.completedAt = x.status==='done'?Date.now():null;
+          if(x.status==='done'){
+            x.status='todo'; x.completedAt=null;
+          }else if(x.repeat && x.repeat!=='none'){
+            x.status='done'; x.completedAt=Date.now();
+            const nid=uid();
+            const due2 = x.due ? nextDue(x.repeat, x.due) : nextDue(x.repeat, todayKey());
+            tasks.push({id:nid, createdAt:Date.now(), completedAt:null,
+              title:x.title, priority:x.priority, area:x.area, category:x.category,
+              due:due2, status:'todo', notes:x.notes, repeat:x.repeat});
+            order.push(nid); saveOrder();
+            toast('Repeated → '+prettyDate(due2));
+          }else{
+            x.status='done'; x.completedAt=Date.now();
+          }
           save(); refresh();
         }else if(act==='edit'){ openModal(x); }
         else if(act==='del'){ tasks=tasks.filter(t=>t.id!==id); order=order.filter(o=>o!==id); saveOrder(); save(); refresh(); toast('Task deleted'); }

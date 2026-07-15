@@ -206,13 +206,24 @@
             <input type="date" id="fDue" />
           </label>
         </div>
-        <label class="field">
-          <span>Status</span>
-          <select id="fStatus">
-            <option value="todo" selected>To do</option>
-            <option value="done">Done</option>
-          </select>
-        </label>
+        <div class="field-row">
+          <label class="field">
+            <span>Repeat</span>
+            <select id="fRepeat">
+              <option value="none" selected>No repeat</option>
+              <option value="daily">Daily</option>
+              <option value="weekly">Weekly</option>
+              <option value="monthly">Monthly</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>Status</span>
+            <select id="fStatus">
+              <option value="todo" selected>To do</option>
+              <option value="done">Done</option>
+            </select>
+          </label>
+        </div>
         <label class="field">
           <span>Notes</span>
           <textarea id="fNotes" rows="3" maxlength="500" placeholder="Optional details…"></textarea>
