@@ -241,6 +241,7 @@ input,select,textarea{font-family:inherit;font-size:14px}
   padding:10px 12px;border:1px solid var(--border);border-radius:10px;background:var(--surface-2);color:var(--text);width:100%;
 }
 .field input:focus,.field select:focus,.field textarea:focus{outline:none;border-color:var(--primary);background:#fff}
+.field-hint{font-size:11px;color:var(--muted);font-weight:500;line-height:1.35}
 .field-row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 .modal-foot{display:flex;align-items:center;gap:9px;margin-top:6px}
 .spacer{flex:1}

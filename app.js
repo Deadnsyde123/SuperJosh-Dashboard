@@ -1,9 +1,9 @@
 /* ============================================================
    Prodash — personal daily productivity dashboard (MVP)
    Vanilla JS, localStorage persistence, no backend.
-   Modules: areas (Work/Personal), manual drag ordering, notes.
-   Structure is modular so AI suggestions & automation can be
-   layered on later (see // EXTENSION hooks).
+   Modules: areas (Work/Personal), manual drag ordering, notes,
+   and TRUE recurring tasks (a task projects occurrences onto
+   every matching date; completing a day marks that day done).
    ============================================================ */
 
 (() => {
@@ -22,19 +22,6 @@
   function dateKey(d){ return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
   function parseKey(k){ const [y,m,d]=k.split('-').map(Number); return new Date(y,m-1,d); }
   function addDays(k,n){ const d=parseKey(k); d.setDate(d.getDate()+n); return dateKey(d); }
-  // advance a due date by the recurrence interval
-  function nextDue(repeat, fromKey){
-    const d=parseKey(fromKey);
-    if(repeat==='daily') d.setDate(d.getDate()+1);
-    else if(repeat==='weekly') d.setDate(d.getDate()+7);
-    else if(repeat==='monthly'){
-      const day=d.getDate();
-      d.setDate(1); d.setMonth(d.getMonth()+1);
-      const dim=new Date(d.getFullYear(), d.getMonth()+1, 0).getDate(); // days in target month
-      d.setDate(Math.min(day, dim));
-    }
-    return dateKey(d);
-  }
   function prettyDate(k){
     if(!k) return '';
     const d=parseKey(k); const t=parseKey(todayKey());
@@ -48,9 +35,34 @@
   const REPEAT_LABEL = {daily:'Daily', weekly:'Weekly', monthly:'Monthly'};
   function escapeHtml(s){ return (s||'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
 
+  /* ---------- recurrence engine ----------
+     A recurring task has `repeat` (none|daily|weekly|monthly) and an
+     anchor `due` date. It produces an occurrence on every date that
+     matches the rule. Completion is tracked per-date in `completedDates`. */
+  function isOccurrenceOn(t, k){
+    if(!t.repeat || t.repeat==='none') return t.due===k;
+    if(!t.due || k < t.due) return false;
+    const a=parseKey(t.due), d=parseKey(k);
+    if(t.repeat==='daily')   return true;
+    if(t.repeat==='weekly')  return a.getDay()===d.getDay();
+    if(t.repeat==='monthly') return a.getDate()===d.getDate();
+    return false;
+  }
+  function occDone(t, k){ return !!(t.completedDates && t.completedDates.includes(k)); }
+  // earliest occurrence date (>= anchor) that is not yet completed
+  function firstPending(t){
+    if(!t.repeat || t.repeat==='none') return t.due;
+    let k=t.due, g=0;
+    while(g++ < 4000){ if(isOccurrenceOn(t,k) && !occDone(t,k)) return k; k=addDays(k,1); }
+    return k;
+  }
+  // "effective due" used for sorting / filters / upcoming: the next pending occurrence
+  function effDue(t){ return (t.repeat && t.repeat!=='none') ? firstPending(t) : t.due; }
+  const isRec = t => !!(t.repeat && t.repeat!=='none');
+
   /* ---------- state ---------- */
   let tasks = [];
-  let order = [];      // manual drag order (array of task ids)
+  let order = [];
   let notes = [];
   let currentView = 'dashboard';
   let filter = 'active';
@@ -62,7 +74,10 @@
 
   /* ---------- persistence ---------- */
   function load(){
-    try { tasks = JSON.parse(localStorage.getItem(STORE_KEY)) || []; } catch { tasks = []; }
+    let raw;
+    try { raw = JSON.parse(localStorage.getItem(STORE_KEY)) || []; } catch { raw = []; }
+    tasks = raw.map(t => ({ completedDates:[], repeat:'none', ...t }));
+    tasks.forEach(t=>{ if(!Array.isArray(t.completedDates)) t.completedDates=[]; });
   }
   function save(){ localStorage.setItem(STORE_KEY, JSON.stringify(tasks)); }
   function loadOrder(){
@@ -81,7 +96,7 @@
     if(o) return o;
     const p = PRIORITY_RANK[a.priority] - PRIORITY_RANK[b.priority];
     if(p) return p;
-    return (a.due||'9999').localeCompare(b.due||'9999');
+    return (effDue(a)||'9999').localeCompare(effDue(b)||'9999');
   }
   function moveTask(dId, targetId, place){
     order = order.filter(id=>id!==dId);
@@ -105,7 +120,7 @@
       {title:'Grocery shopping',        priority:'medium', area:'personal', category:'Errands',  due:addDays(t,-1),status:'todo', notes:'', repeat:'weekly'},
     ];
     const now = Date.now();
-    tasks = sample.map((s,i)=>({id:uid(), createdAt:now+i, completedAt: s.status==='done'?now:null, ...s}));
+    tasks = sample.map((s,i)=>({id:uid(), createdAt:now+i, completedAt:null, completedDates:[], ...s}));
     order = tasks.map(t=>t.id);
     save(); saveOrder();
     localStorage.setItem(SEED_KEY,'1');
@@ -138,41 +153,53 @@
   /* ---------- dashboard ---------- */
   function renderDashboard(){
     const t = todayKey();
-    const active = tasks.filter(x=>x.status!=='done');
-    const done = tasks.filter(x=>x.status==='done');
-    const overdue = active.filter(x=>x.due && x.due < t);
-    const dueToday = tasks.filter(x=>x.due===t);
-    const doneToday = tasks.filter(x=>x.completedAt && dateKey(new Date(x.completedAt))===t);
+    const active = tasks.filter(x=> isRec(x) ? true : x.status!=='done');
+
+    const dueTodayTasks = tasks.filter(x=>
+      isRec(x) ? (isOccurrenceOn(x,t) && !occDone(x,t))
+               : (x.due===t && x.status!=='done'));
+    const doneTodayTasks = tasks.filter(x=>
+      isRec(x) ? occDone(x,t)
+               : (x.status==='done' && x.completedAt && dateKey(new Date(x.completedAt))===t));
+    const overdueTasks = tasks.filter(x=>{
+      if(isRec(x)){ const p=firstPending(x); return p<t; }
+      return x.due && x.due<t && x.status!=='done';
+    });
+    const doneCount = tasks.reduce((n,x)=>
+      isRec(x) ? n + x.completedDates.length
+               : (x.status==='done' ? n+1 : n), 0);
 
     $('#greet').textContent = greeting();
     $('#todayDate').textContent = new Date().toLocaleDateString(undefined,{weekday:'long',month:'long',day:'numeric'});
 
     const stats=[
       {cls:'s-total',ico:'◴',num:active.length,label:'Active tasks'},
-      {cls:'s-done', ico:'✓',num:done.length, label:'Completed'},
-      {cls:'s-prog', ico:'◔',num:dueToday.length, label:'Due today'},
-      {cls:'s-over', ico:'!',num:overdue.length, label:'Overdue'},
+      {cls:'s-done', ico:'✓',num:doneCount,     label:'Completed'},
+      {cls:'s-prog', ico:'◔',num:dueTodayTasks.length, label:'Due today'},
+      {cls:'s-over', ico:'!',num:overdueTasks.length,  label:'Overdue'},
     ];
     $('#statGrid').innerHTML = stats.map(s=>`
       <div class="stat ${s.cls}">
         <div class="ico">${s.ico}</div>
         <div class="num">${s.num}</div>
-        <div class="lbl">${s.label}</div>
+        <div class="lbl">${s.lbl}</div>
       </div>`).join('');
 
     // today ring
-    const total = dueToday.length;
-    const pct = total ? Math.round(doneToday.length/total*100) : 100;
+    const total = dueTodayTasks.length;
+    const pct = total ? Math.round(doneTodayTasks.length/total*100) : 100;
     $('#ringWrap').innerHTML = ring(pct);
     $('#ringCaption').textContent = total
-      ? `${doneToday.length} of ${total} done today`
+      ? `${doneTodayTasks.length} of ${total} done today`
       : 'Nothing scheduled today 🎉';
 
-    // weekly chart
+    // weekly chart (completions per day)
     const days=[]; let max=0;
     for(let i=6;i>=0;i--){
       const k=addDays(t,-i);
-      const c=tasks.filter(x=>x.completedAt && dateKey(new Date(x.completedAt))===k).length;
+      const c=tasks.reduce((n,x)=>
+        isRec(x) ? (x.completedDates.includes(k)?n+1:n)
+                 : (x.status==='done' && x.completedAt && dateKey(new Date(x.completedAt))===k ? n+1 : n), 0);
       max=Math.max(max,c);
       days.push({k,label:parseKey(k).toLocaleDateString(undefined,{weekday:'short'}).slice(0,2),c});
     }
@@ -183,13 +210,16 @@
         <span class="bar-label">${d.label}</span>
       </div>`).join('');
 
-    // upcoming (next 7 days)
+    // upcoming (next 7 days) — uses next pending occurrence as the due
     const up = active
-      .filter(x=>x.due && x.due>=t && x.due<=addDays(t,7))
-      .sort((a,b)=> (a.due).localeCompare(b.due) || PRIORITY_RANK[a.priority]-PRIORITY_RANK[b.priority])
+      .filter(x=>{ const dd=effDue(x); return dd && dd>=t && dd<=addDays(t,7); })
+      .sort((a,b)=> (effDue(a)||'9').localeCompare(effDue(b)||'9') || PRIORITY_RANK[a.priority]-PRIORITY_RANK[b.priority])
       .slice(0,6);
     $('#upcomingList').innerHTML = up.length
-      ? up.map(x=>taskRow(x)).join('')
+      ? up.map(x=>{
+          const dd=effDue(x); const dn= isRec(x)?occDone(x,dd):(x.status==='done');
+          return taskRow(x,{due:dd, done:dn});
+        }).join('')
       : `<div class="empty-state">No upcoming tasks. Nice and calm.</div>`;
 
     renderAreaBars();
@@ -200,7 +230,7 @@
     const areas=['work','personal'];
     $('#areaBars').innerHTML = areas.map(a=>{
       const all=tasks.filter(x=>x.area===a);
-      const done=all.filter(x=>x.status==='done');
+      const done=all.filter(x=> isRec(x) ? x.completedDates.length>0 : x.status==='done');
       const pct=all.length?Math.round(done.length/all.length*100):0;
       return `<div class="cat-bar">
         <div class="cat-top"><b>${a==='work'?'Work':'Personal'}</b><span class="muted">${done.length}/${all.length}</span></div>
@@ -235,10 +265,10 @@
   function renderTasks(){
     const t=todayKey();
     let list = tasks.slice();
-    if(filter==='active')   list=list.filter(x=>x.status!=='done');
-    if(filter==='done')     list=list.filter(x=>x.status==='done');
-    if(filter==='today')    list=list.filter(x=>x.due===t);
-    if(filter==='upcoming') list=list.filter(x=>x.status!=='done' && x.due && x.due>t);
+    if(filter==='active')   list=list.filter(x=> isRec(x) ? true : x.status!=='done');
+    if(filter==='done')     list=list.filter(x=> !isRec(x) && x.status==='done');
+    if(filter==='today')    list=list.filter(x=> effDue(x)===t);
+    if(filter==='upcoming') list=list.filter(x=>{ const dd=effDue(x); return dd && dd>t; });
     if(areaFilter!=='all')  list=list.filter(x=>x.area===areaFilter);
     if(query) list=list.filter(x=>(x.title+' '+(x.category||'')+' '+(x.notes||'')).toLowerCase().includes(query.toLowerCase()));
 
@@ -246,7 +276,10 @@
 
     const mount=$('#taskList');
     mount.innerHTML = list.length
-      ? list.map(x=>taskRow(x,{drag:true})).join('')
+      ? list.map(x=>{
+          const dd=effDue(x); const dn= isRec(x)?occDone(x,dd):(x.status==='done');
+          return taskRow(x,{drag:true, due:dd, done:dn});
+        }).join('')
       : `<div class="empty-state">No tasks here yet.</div>`;
 
     renderCategoryBars();
@@ -258,7 +291,9 @@
     tasks.forEach(x=>{
       const c=x.category||'Other';
       cats[c]=cats[c]||{total:0,done:0};
-      cats[c].total++; if(x.status==='done') cats[c].done++;
+      cats[c].total++;
+      if(isRec(x)){ if(x.completedDates.length>0) cats[c].done++; }
+      else if(x.status==='done') cats[c].done++;
     });
     const keys=Object.keys(cats).sort((a,b)=>cats[b].total-cats[a].total).slice(0,6);
     $('#catBars').innerHTML = keys.length ? keys.map(k=>{
@@ -270,25 +305,29 @@
     }).join('') : `<div class="empty-state">No categories yet.</div>`;
   }
 
+  // opts: { drag, done, due, onDate, hideGrip }
   function taskRow(x, opts={}){
     const drag = opts.drag ? 'draggable="true"' : '';
-    const grip = opts.drag ? '<span class="grip" title="Drag to reorder">⠿</span>' : '';
+    const grip = (opts.drag && !opts.hideGrip) ? '<span class="grip" title="Drag to reorder">⠿</span>' : '';
     const t=todayKey();
+    const done = opts.done!==undefined ? opts.done : (x.status==='done');
+    const due  = opts.due!==undefined  ? opts.due  : x.due;
     let dueCls='', dueTxt='';
-    if(x.due){
-      dueTxt=prettyDate(x.due);
-      if(x.status!=='done'){ if(x.due<t) dueCls='over'; else if(x.due===t) dueCls='today'; }
+    if(due){
+      dueTxt=prettyDate(due);
+      if(!done){ if(due<t) dueCls='over'; else if(due===t) dueCls='today'; }
     }
-    return `<div class="task ${x.status==='done'?'done':''}" data-id="${x.id}" ${drag}>
+    const dataDate = opts.onDate ? `data-date="${opts.onDate}"` : '';
+    return `<div class="task ${done?'done':''}" data-id="${x.id}" ${dataDate} ${drag}>
       ${grip}
-      <button class="check" data-act="toggle" title="Toggle done">${x.status==='done'?'✓':''}</button>
+      <button class="check" data-act="toggle" title="Toggle done">${done?'✓':''}</button>
       <div class="t-main">
         <div class="t-title">${escapeHtml(x.title)}</div>
         <div class="t-meta">
           <span class="tag p-${x.priority}">${x.priority}</span>
           <span class="tag area ${x.area}">${x.area==='work'?'Work':'Personal'}</span>
           ${x.category?`<span class="tag cat">${escapeHtml(x.category)}</span>`:''}
-          ${x.repeat && x.repeat!=='none'?`<span class="tag repeat" title="Repeats ${REPEAT_LABEL[x.repeat]}">🔁 ${REPEAT_LABEL[x.repeat]}</span>`:''}
+          ${isRec(x)?`<span class="tag repeat" title="Repeats ${REPEAT_LABEL[x.repeat]}">🔁 ${REPEAT_LABEL[x.repeat]}</span>`:''}
           ${dueTxt?`<span class="tag due ${dueCls}">${dueTxt}</span>`:''}
         </div>
       </div>
@@ -320,7 +359,7 @@
       dows.map(w=>`<div class="cal-dow">${w}</div>`).join('') +
       cells.map(c=>{
         if(c.muted) return `<div class="cal-cell muted-cell"><span class="cal-num">${c.num}</span></div>`;
-        const dayTasks=tasks.filter(x=>x.due===c.key);
+        const dayTasks=tasks.filter(x=>isOccurrenceOn(x,c.key));
         const dots=dayTasks.slice(0,4).map(x=>`<span class="cal-dot p-${x.priority}"></span>`).join('');
         const cls=[c.key===todayKey()?'today':'', c.key===selectedDay?'selected':''].join(' ').trim();
         return `<div class="cal-cell ${cls}" data-day="${c.key}">
@@ -336,9 +375,14 @@
     $('#agendaTitle').textContent = selectedDay===todayKey()
       ? 'Today'
       : (selectedDay?prettyDate(selectedDay):'—');
-    const list=tasks.filter(x=>x.due===selectedDay).sort(byOrder);
+    const list=tasks.filter(x=>isOccurrenceOn(x,selectedDay)).sort(byOrder);
     $('#agenda').innerHTML = list.length
-      ? list.map(x=>taskRow(x,{drag:true})).join('')
+      ? list.map(x=>{
+          if(isRec(x)){
+            return taskRow(x,{ drag:false, hideGrip:true, due:selectedDay, done:occDone(x,selectedDay), onDate:selectedDay });
+          }
+          return taskRow(x);
+        }).join('')
       : `<div class="empty-state">No tasks this day.</div>`;
   }
 
@@ -380,7 +424,7 @@
       toast('Task updated');
     }else{
       const id=uid();
-      tasks.push({id, createdAt:Date.now(), completedAt: data.status==='done'?Date.now():null, ...data});
+      tasks.push({id, createdAt:Date.now(), completedAt: data.status==='done'?Date.now():null, completedDates:[], ...data});
       order.push(id); saveOrder();
       toast('Task added');
     }
@@ -497,19 +541,21 @@
         const x=tasks.find(t=>t.id===id); if(!x) return;
         const act=actBtn.dataset.act;
         if(act==='toggle'){
-          if(x.status==='done'){
-            x.status='todo'; x.completedAt=null;
-          }else if(x.repeat && x.repeat!=='none'){
-            x.status='done'; x.completedAt=Date.now();
-            const nid=uid();
-            const due2 = x.due ? nextDue(x.repeat, x.due) : nextDue(x.repeat, todayKey());
-            tasks.push({id:nid, createdAt:Date.now(), completedAt:null,
-              title:x.title, priority:x.priority, area:x.area, category:x.category,
-              due:due2, status:'todo', notes:x.notes, repeat:x.repeat});
-            order.push(nid); saveOrder();
-            toast('Repeated → '+prettyDate(due2));
+          const onDate = row.dataset.date;           // set for recurring occurrences in the agenda
+          if(isRec(x) && onDate){
+            // toggle completion of this specific day's occurrence
+            if(occDone(x,onDate)) x.completedDates = x.completedDates.filter(d=>d!==onDate);
+            else { x.completedDates.push(onDate); x.completedDates.sort(); }
+            toast('Recurring · '+(occDone(x,onDate)?'done ':'open ')+prettyDate(onDate));
+          }else if(isRec(x)){
+            // toggling from the Tasks/Dashboard list → complete the next pending occurrence
+            const pend=firstPending(x);
+            if(occDone(x,pend)) x.completedDates = x.completedDates.filter(d=>d!==pend);
+            else x.completedDates.push(pend);
+            toast('Recurring → '+prettyDate(pend));
           }else{
-            x.status='done'; x.completedAt=Date.now();
+            x.status = x.status==='done'?'todo':'done';
+            x.completedAt = x.status==='done'?Date.now():null;
           }
           save(); refresh();
         }else if(act==='edit'){ openModal(x); }
