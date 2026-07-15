@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#6366f1" />
+  <title>Prodash — Daily Productivity Dashboard</title>
+  <link rel="stylesheet" href="styles.css" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚡</text></svg>" />
+</head>
+<body>
+  <div class="app">
+    <!-- Sidebar (desktop) -->
+    <aside class="sidebar">
+      <div class="brand">
+        <span class="brand-mark">⚡</span>
+        <span class="brand-name">Prodash</span>
+      </div>
+      <nav class="nav">
+        <button class="nav-item active" data-view="dashboard">
+          <span class="nav-ico">▦</span><span>Dashboard</span>
+        </button>
+        <button class="nav-item" data-view="tasks">
+          <span class="nav-ico">✓</span><span>Tasks</span>
+        </button>
+        <button class="nav-item" data-view="timeline">
+          <span class="nav-ico">◷</span><span>Timeline</span>
+        </button>
+        <button class="nav-item coming" data-view="ai" disabled title="Coming soon">
+          <span class="nav-ico">✦</span><span>AI Assist</span>
+          <span class="badge-soon">soon</span>
+        </button>
+      </nav>
+      <div class="sidebar-foot">
+        <button id="clearData" class="link-btn" title="Clear all saved data">Clear all data</button>
+      </div>
+    </aside>
+
+    <!-- Main -->
+    <main class="main">
+      <!-- Dashboard view -->
+      <section class="view" id="view-dashboard">
+        <header class="topbar">
+          <div>
+            <h1 id="greet">Good day</h1>
+            <p class="sub" id="todayDate">—</p>
+          </div>
+          <button class="btn primary" id="quickAddBtn">+ New task</button>
+        </header>
+
+        <!-- Stat cards -->
+        <div class="stat-grid" id="statGrid"></div>
+
+        <!-- Today progress + weekly chart -->
+        <div class="row">
+          <div class="card span-1">
+            <h3 class="card-title">Today's focus</h3>
+            <div class="ring-wrap" id="ringWrap"></div>
+            <p class="ring-caption" id="ringCaption"></p>
+          </div>
+          <div class="card span-2">
+            <h3 class="card-title">Completed this week</h3>
+            <div class="chart" id="weekChart"></div>
+          </div>
+        </div>
+
+        <!-- Upcoming | Notes -->
+        <div class="row row-top">
+          <div class="card span-2">
+            <h3 class="card-title">Upcoming</h3>
+            <div id="upcomingList" class="task-list compact"></div>
+          </div>
+          <div class="card notes-card span-1">
+            <h3 class="card-title">Notes &amp; reminders</h3>
+            <div class="notes-add">
+              <input type="text" id="noteInput" class="search" placeholder="Add a quote or reminder to yourself…" maxlength="200" />
+              <button class="btn primary" id="noteAdd">Add</button>
+            </div>
+            <div id="noteList" class="note-list"></div>
+          </div>
+        </div>
+
+        <!-- AI + Work vs Personal -->
+        <div class="row">
+          <div class="card ai-card span-1">
+            <div class="ai-glow">✦</div>
+            <h3 class="card-title">AI Suggestions</h3>
+            <p class="muted">Smart task suggestions &amp; automation arrive here. Built as an empty, ready-to-wire panel.</p>
+            <span class="pill">Expansion point</span>
+          </div>
+          <div class="card span-2">
+            <h3 class="card-title">Work vs Personal</h3>
+            <div id="areaBars"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Tasks view -->
+      <section class="view hidden" id="view-tasks">
+        <header class="topbar">
+          <div>
+            <h1>Tasks</h1>
+            <p class="sub">Plan and manage your work</p>
+          </div>
+          <button class="btn primary" data-open-add>+ New task</button>
+        </header>
+
+        <div class="toolbar">
+          <div class="chips" id="filterChips">
+            <button class="chip active" data-filter="active">Active</button>
+            <button class="chip" data-filter="today">Today</button>
+            <button class="chip" data-filter="upcoming">Upcoming</button>
+            <button class="chip" data-filter="all">All</button>
+            <button class="chip" data-filter="done">Done</button>
+          </div>
+          <div class="chips" id="areaChips">
+            <button class="chip active" data-area="all">All</button>
+            <button class="chip" data-area="work">Work</button>
+            <button class="chip" data-area="personal">Personal</button>
+          </div>
+          <input type="search" id="searchInput" class="search" placeholder="Search tasks…" />
+        </div>
+
+        <div class="row">
+          <div class="card span-1">
+            <h3 class="card-title">By category</h3>
+            <div id="catBars"></div>
+          </div>
+          <div class="card span-2">
+            <div id="taskList" class="task-list draggable-list"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Timeline view -->
+      <section class="view hidden" id="view-timeline">
+        <header class="topbar">
+          <div>
+            <h1>Timeline</h1>
+            <p class="sub">Your month at a glance</p>
+          </div>
+          <div class="cal-nav">
+            <button class="icon-btn" id="calPrev">‹</button>
+            <span id="calLabel" class="cal-label"></span>
+            <button class="icon-btn" id="calNext">›</button>
+          </div>
+        </header>
+
+        <div class="row">
+          <div class="card span-2">
+            <div id="calendar" class="calendar"></div>
+          </div>
+          <div class="card span-1">
+            <h3 class="card-title" id="agendaTitle">Day agenda</h3>
+            <div id="agenda" class="task-list compact draggable-list"></div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- Bottom nav (mobile) -->
+    <nav class="bottom-nav">
+      <button class="bn-item active" data-view="dashboard"><span>▦</span>Home</button>
+      <button class="bn-item" data-view="tasks"><span>✓</span>Tasks</button>
+      <button class="bn-item" data-view="timeline"><span>◷</span>Time</button>
+    </nav>
+  </div>
+
+  <!-- Task modal -->
+  <div class="modal-backdrop hidden" id="taskModal">
+    <div class="modal" role="dialog" aria-modal="true">
+      <div class="modal-head">
+        <h3 id="modalTitle">New task</h3>
+        <button class="icon-btn" id="modalClose">✕</button>
+      </div>
+      <form id="taskForm" class="form">
+        <label class="field">
+          <span>Title</span>
+          <input type="text" id="fTitle" required maxlength="120" placeholder="What needs to be done?" />
+        </label>
+        <div class="field-row">
+          <label class="field">
+            <span>Priority</span>
+            <select id="fPriority">
+              <option value="high">High</option>
+              <option value="medium" selected>Medium</option>
+              <option value="low">Low</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>Area</span>
+            <select id="fArea">
+              <option value="personal">Personal</option>
+              <option value="work">Work</option>
+            </select>
+          </label>
+        </div>
+        <div class="field-row">
+          <label class="field">
+            <span>Category</span>
+            <input type="text" id="fCategory" list="catList" placeholder="e.g. Deep work" />
+            <datalist id="catList"></datalist>
+          </label>
+          <label class="field">
+            <span>Due date</span>
+            <input type="date" id="fDue" />
+          </label>
+        </div>
+        <label class="field">
+          <span>Status</span>
+          <select id="fStatus">
+            <option value="todo" selected>To do</option>
+            <option value="done">Done</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>Notes</span>
+          <textarea id="fNotes" rows="3" maxlength="500" placeholder="Optional details…"></textarea>
+        </label>
+        <div class="modal-foot">
+          <button type="button" class="btn ghost" id="modalDelete" hidden>Delete</button>
+          <div class="spacer"></div>
+          <button type="button" class="btn ghost" id="modalCancel">Cancel</button>
+          <button type="submit" class="btn primary">Save</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
